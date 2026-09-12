@@ -1,9 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --dojang-primary: #0F4C8C;
+  --dojang-secondary: #0A0A0A;
+  --dojang-accent: #E53935;
 }
+.bg-primary { background-color: var(--dojang-primary); }
+.text-primary { color: var(--dojang-primary); }
+.border-primary { border-color: var(--dojang-primary); }
 
 @theme inline {
   --color-background: var(--background);
