@@ -22,9 +22,11 @@ export default async function DojangPage({ params }: { params: Promise<{ slug: s
       </div>
 
       {/* Primary CTA - uses primary */}
-      <button className="w-full p-5 rounded- font-black text-lg text-white shadow-xl active:scale-[0.98] transition" style={{backgroundColor: 'var(--dojang-secondary)'}}>
-        🎥 Record Taegeuk 1
-      </button>
+<Link href={`/d/${slug}/record`} className="block w-full">
+  <button className="w-full p-5 rounded-[20px] font-black text-lg text-white shadow-xl active:scale-[0.98] transition" style={{backgroundColor: 'var(--dojang-secondary)'}}>
+    🎥 Record Taegeuk 1
+  </button>
+</Link>
 
       {/* Stats - uses accent */}
       <div className="grid grid-cols-2 gap-4">
