@@ -16,25 +16,39 @@ export default function BrandingAdmin() {
     supabase.from('dojangs').select('*').eq('slug', slug).single().then(({data}) => setDojang(data))
   }, [slug])
 
-  const save = async () => {
-    await supabase.from('dojangs').update({
-      name: dojang.name,
-      primary_color: dojang.primary_color,
-      secondary_color: dojang.secondary_color,
-      accent_color: dojang.accent_color,
-      logo_url: dojang.logo_url
-    }).eq('slug', slug)
-    alert(`Saved! Now go to /d/${slug} and hard refresh (Cmd+Shift+R) to see it.`)
-  }
+const save = async () => {
+  const { error, count } = await supabase.from('dojangs').update({
+    name: dojang.name,
+    primary_color: dojang.primary_color,
+    secondary_color: dojang.secondary_color,
+    accent_color: dojang.accent_color,
+    logo_url: dojang.logo_url
+  }).eq('slug', slug)
 
-  const uploadLogo = async (e: any) => {
-    const file = e.target.files[0]
-    if (!file) return
-    const path = `${slug}/logo-${Date.now()}.png`
-    await supabase.storage.from('dojang-assets').upload(path, file, { upsert: true })
-    const { data } = supabase.storage.from('dojang-assets').getPublicUrl(path)
-    setDojang({...dojang, logo_url: data.publicUrl})
+  if (error) {
+    alert('Save failed: ' + error.message)
+    console.error(error)
+  } else {
+    alert(`Saved! Check Supabase table now. Go to /d/${slug} and hard refresh.`)
   }
+}
+
+const uploadLogo = async (e: any) => {
+  const file = e.target.files[0]
+  if (!file) return
+  const path = `${slug}/logo-${Date.now()}.png`
+  const { data, error } = await supabase.storage.from('dojang-assets').upload(path, file, { upsert: true })
+  
+  if (error) {
+    alert('Upload failed: ' + error.message)
+    console.error(error)
+    return
+  }
+  
+  const { data: urlData } = supabase.storage.from('dojang-assets').getPublicUrl(data.path)
+  console.log('Logo URL:', urlData.publicUrl)
+  setDojang({...dojang, logo_url: urlData.publicUrl})
+}
 
   return (
     <div className="max-w-2xl mx-auto p-8 space-y-6">
