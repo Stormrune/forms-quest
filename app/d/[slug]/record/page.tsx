@@ -20,6 +20,8 @@ export default function RecordPage() {
   const [uploading, setUploading] = useState(false)
   const [score, setScore] = useState<any>(null)
   const [dojang, setDojang] = useState<any>(null)
+  const [practiceId, setPracticeId] = useState<string | null>(null)
+  const [isPinned, setIsPinned] = useState(false)
 
   useEffect(() => {
     supabase.from('dojangs').select('*').eq('slug', slug).single().then(({data}) => setDojang(data))
@@ -31,42 +33,27 @@ export default function RecordPage() {
   }, [facingMode])
 
   const startCamera = async (mode: 'environment' | 'user') => {
-    // Stop old stream
     stream?.getTracks().forEach(t => t.stop())
     try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: mode },
-        audio: true
-      })
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode }, audio: true })
       setStream(s)
       if (videoRef.current) {
         videoRef.current.srcObject = s
-        // Mirror only front camera
         videoRef.current.style.transform = mode === 'user'? 'scaleX(-1)' : 'scaleX(1)'
       }
     } catch (e) {
-      // Fallback to user if back camera not available
-      if (mode === 'environment') {
-        setFacingMode('user')
-      } else {
-        alert('Camera permission needed — must be HTTPS and allow camera')
-      }
+      if (mode === 'environment') setFacingMode('user')
+      else alert('Camera permission needed — must be HTTPS and allow camera')
     }
   }
 
-  const toggleCamera = () => {
-    setFacingMode(prev => prev === 'environment'? 'user' : 'environment')
-  }
+  const toggleCamera = () => setFacingMode(prev => prev === 'environment'? 'user' : 'environment')
 
   const startCountdown = () => {
     setCountdown(3)
     const interval = setInterval(() => {
       setCountdown(c => {
-        if (c <= 1) {
-          clearInterval(interval)
-          startRecording()
-          return 0
-        }
+        if (c <= 1) { clearInterval(interval); startRecording(); return 0 }
         return c - 1
       })
     }, 1000)
@@ -74,12 +61,19 @@ export default function RecordPage() {
 
   const startRecording = () => {
     if (!stream) return
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' })
+    // Low bitrate = 70% smaller files, still fine for stance check
+    let options: any = { videoBitsPerSecond: 800000 }
+    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+      options.mimeType = 'video/webm;codecs=vp9'
+    } else {
+      options.mimeType = 'video/webm'
+    }
+    const recorder = new MediaRecorder(stream, options)
     mediaRecorderRef.current = recorder
     const chunks: Blob[] = []
     recorder.ondataavailable = e => chunks.push(e.data)
     recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: 'video/webm' })
+      const blob = new Blob(chunks, { type: options.mimeType })
       setRecordedBlob(blob)
       setPreviewUrl(URL.createObjectURL(blob))
     }
@@ -113,15 +107,35 @@ export default function RecordPage() {
     const { data: urlData } = supabase.storage.from('practice-videos').getPublicUrl(data.path)
     const s = mockScore()
     setScore(s)
-    await supabase.from('practices').insert({
+
+    const expiresAt = new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString()
+    const { data: inserted, error: insertError } = await supabase.from('practices').insert({
       dojang_id: dojang?.id,
       slug,
       video_url: urlData.publicUrl,
       score: s.total,
       poomsae: 'Taegeuk 1 Jang',
-      breakdown: s
-    })
+      breakdown: s,
+      pinned: false,
+      expires_at: expiresAt
+    }).select().single()
+
+    if (insertError) console.error(insertError)
+    else {
+      setPracticeId(inserted.id)
+      setIsPinned(false)
+    }
     setUploading(false)
+  }
+
+  const togglePin = async () => {
+    if (!practiceId) return
+    const newPinned =!isPinned
+    const { error } = await supabase.from('practices').update({
+      pinned: newPinned,
+      expires_at: newPinned? null : new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString()
+    }).eq('id', practiceId)
+    if (!error) setIsPinned(newPinned)
   }
 
   if (score) {
@@ -138,10 +152,33 @@ export default function RecordPage() {
           <div className="mt-6 p-4 rounded-xl text-sm" style={{backgroundColor: `${dojang?.primary_color}15`, color: dojang?.primary_color}}>
             💡 {score.tip}
           </div>
+
           {previewUrl && <video src={previewUrl} controls className="w-full rounded-xl mt-6" />}
+
+          {/* Retention UI */}
+          <div className="mt-6 p-4 rounded-xl border bg-amber-50 border-amber-200 text-left">
+            <div className="flex justify-between items-start gap-3">
+              <div>
+                <div className="font-bold text-sm">📼 Video Storage</div>
+                <div className="text-xs text-gray-600 mt-1">
+                  {isPinned? '✓ Saved forever for belt testing' : 'Auto-deletes in 21 days. Scores are kept forever.'}
+                </div>
+              </div>
+              <button onClick={togglePin} className={`px-4 py-2 rounded-full text-xs font-bold ${isPinned? 'bg-black text-white' : 'bg-white border'}`}>
+                {isPinned? 'Saved ✓' : 'Save Forever'}
+              </button>
+            </div>
+          </div>
+
           <div className="mt-6 flex gap-3">
             <Link href={`/d/${slug}`} className="flex-1 bg-black text-white p-4 rounded-xl font-bold text-center">Done</Link>
-            <button onClick={() => { setScore(null); setRecordedBlob(null); setPreviewUrl(null); startCamera(facingMode) }} className="flex-1 border p-4 rounded-xl font-bold">Record Again</button>
+            <button onClick={() => { setScore(null); setRecordedBlob(null); setPreviewUrl(null); setPracticeId(null); startCamera(facingMode) }} className="flex-1 border p-4 rounded-xl font-bold">Record Again</button>
+          </div>
+
+          <div className="mt-6 p-4 border-2 border-dashed rounded-xl">
+            <div className="text-xs uppercase tracking-widest text-gray-400">Trading Card Unlocked</div>
+            <div className="font-black mt-1">{dojang?.name} • Taegeuk 1 • {score.total}/100</div>
+            <div className="text-xs text-gray-400 mt-1">{isPinned? 'Pinned to profile' : '21-day practice video'}</div>
           </div>
         </div>
       </div>
@@ -150,18 +187,14 @@ export default function RecordPage() {
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
-      {/* Header with back + flip */}
       <div className="p-4 flex justify-between items-center bg-white border-b">
         <Link href={`/d/${slug}`} className="text-gray-600 font-bold">← Back</Link>
         <div className="flex items-center gap-3">
           <div className="text-xs text-gray-500">{facingMode === 'environment'? 'Back Camera' : 'Front Camera'}</div>
-          <button onClick={toggleCamera} disabled={recording || countdown > 0} className="border px-3 py-2 rounded-full text-sm font-bold disabled:opacity-50">
-            🔄 Flip
-          </button>
+          <button onClick={toggleCamera} disabled={recording || countdown > 0} className="border px-3 py-2 rounded-full text-sm font-bold disabled:opacity-50">🔄 Flip</button>
         </div>
       </div>
 
-      {/* START BUTTON NOW ON TOP - always visible */}
       <div className="p-4 bg-white">
         {!recordedBlob? (
           <>
@@ -171,11 +204,9 @@ export default function RecordPage() {
               </button>
             )}
             {recording && (
-              <button onClick={stopRecording} className="w-full p-5 rounded-xl font-black text-lg bg-red-600 text-white">
-                ● Stop Recording
-              </button>
+              <button onClick={stopRecording} className="w-full p-5 rounded-xl font-black text-lg bg-red-600 text-white">● Stop Recording</button>
             )}
-            <p className="text-center text-xs text-gray-400 mt-2">40 sec max • Place phone so full body is visible</p>
+            <p className="text-center text-xs text-gray-400 mt-2">40 sec • 21-day auto-delete • Save best ones</p>
           </>
         ) : (
           <div className="flex gap-3">
@@ -187,7 +218,6 @@ export default function RecordPage() {
         )}
       </div>
 
-      {/* Video below button */}
       <div className="flex-1 relative bg-gray-900 flex items-center justify-center overflow-hidden min-h-[50vh]">
         <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover max-h-[65vh]" />
         {countdown > 0 && (
@@ -199,7 +229,7 @@ export default function RecordPage() {
           <video src={previewUrl} controls className="absolute inset-0 w-full h-full object-cover" />
         )}
         {recording && (
-          <div className="absolute top-4 left-4 bg-red-600 text-white text-xs px-3 py-1 rounded-full animate-pulse">● REC</div>
+          <div className="absolute top-4 left-4 bg-red-600 text-white text-xs px-3 py-1 rounded-full animate-pulse">● REC • 0.8 Mbps</div>
         )}
       </div>
     </div>
