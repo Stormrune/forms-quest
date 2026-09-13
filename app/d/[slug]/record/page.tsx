@@ -29,9 +29,7 @@ export default function RecordPage() {
 
   useEffect(() => {
     startCamera(facingMode)
-    return () => {
-      stream?.getTracks().forEach(t => t.stop())
-    }
+    return () => { stream?.getTracks().forEach(t => t.stop()) }
   }, [facingMode])
 
   const startCamera = async (mode: any) => {
@@ -50,11 +48,7 @@ export default function RecordPage() {
     setCountdown(3)
     const iv = setInterval(() => {
       setCountdown(c => {
-        if (c <= 1) {
-          clearInterval(iv)
-          startRecording()
-          return 0
-        }
+        if (c <= 1) { clearInterval(iv); startRecording(); return 0 }
         return c - 1
       })
     }, 1000)
@@ -72,12 +66,7 @@ export default function RecordPage() {
     }
     rec.start()
     setRecording(true)
-    setTimeout(() => {
-      if (rec.state === 'recording') {
-        rec.stop()
-        setRecording(false)
-      }
-    }, 40000)
+    setTimeout(() => { if (rec.state === 'recording') { rec.stop(); setRecording(false) } }, 40000)
   }
 
   const stopRecording = () => {
@@ -85,15 +74,21 @@ export default function RecordPage() {
     setRecording(false)
   }
 
+  // THIS IS THE FIX - full model + tracking options + 640x480
   const extractPoses = async (blob: Blob) => {
-    setStatus('Loading MediaPipe...')
+    setStatus('Loading MediaPipe full model... (better with dobok pants)')
     const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm')
+
+    // HERE IS WHERE THE TRACKING OPTIONS GO
     const landmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
-        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task'
       },
       runningMode: 'VIDEO',
-      numPoses: 1
+      numPoses: 1,
+      minPoseDetectionConfidence: 0.7,
+      minPosePresenceConfidence: 0.7,
+      minTrackingConfidence: 0.7
     })
 
     setStatus('Analyzing movement... 0%')
@@ -105,19 +100,19 @@ export default function RecordPage() {
 
     const poses: any[] = []
     const canvas = document.createElement('canvas')
-    canvas.width = 320
-    canvas.height = 240
+    canvas.width = 640
+    canvas.height = 480
     const ctx = canvas.getContext('2d')!
 
     while (video.currentTime < video.duration) {
-      ctx.drawImage(video, 0, 0, 320, 240)
+      ctx.drawImage(video, 0, 0, 640, 480)
       const result = landmarker.detectForVideo(canvas, performance.now())
       if (result.landmarks && result.landmarks[0]) {
         poses.push(result.landmarks[0])
       }
       video.currentTime += 0.1
       if (poses.length % 10 === 0) {
-        setStatus(`Analyzing movement... ${Math.round((video.currentTime / video.duration) * 100)}% - ${poses.length} frames`)
+        setStatus(`Analyzing... ${Math.round((video.currentTime / video.duration) * 100)}% - ${poses.length} frames`)
       }
       await new Promise((r) => setTimeout(r, 10))
     }
@@ -129,51 +124,31 @@ export default function RecordPage() {
   const uploadAndScore = async () => {
     if (!recordedBlob) return
     setUploading(true)
-
     let poses: any[] = []
-    try {
-      poses = await extractPoses(recordedBlob)
-    } catch (e) {
-      console.error(e)
-      setStatus('Pose extraction failed, uploading video anyway...')
-    }
-
+    try { poses = await extractPoses(recordedBlob) } catch (e) { console.error(e) }
     try {
       setStatus('Uploading video...')
       const path = `${slug}/${Date.now()}.webm`
       const { data: uploadData } = await supabase.storage.from('practice-videos').upload(path, recordedBlob)
       if (!uploadData) throw new Error('Video upload failed')
       const { data: urlData } = supabase.storage.from('practice-videos').getPublicUrl(uploadData.path)
-
       setStatus('Saving practice...')
       const expiresAt = new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString()
       const { data: inserted, error: insertError } = await supabase.from('practices').insert({
-        dojang_id: dojang?.id,
-        slug,
-        video_url: urlData.publicUrl,
-        poomsae: 'Taegeuk 1 Jang',
-        pinned: false,
-        expires_at: expiresAt
+        dojang_id: dojang?.id, slug, video_url: urlData.publicUrl, poomsae: 'Taegeuk 1 Jang', pinned: false, expires_at: expiresAt
       }).select().single()
-
       if (insertError) throw insertError
-
       if (poses.length > 0) {
-        setStatus('Saving pose data for debugger...')
+        setStatus('Saving pose data...')
         const poseBlob = new Blob([JSON.stringify({ poses, frames: poses.length })], { type: 'application/json' })
         await supabase.storage.from('practice-poses').upload(`${inserted.id}-poses.json`, poseBlob, { upsert: true })
       }
-
-      setStatus('Scoring vs gold standard...')
-      const { data: scoreData } = await supabase.functions.invoke('score-practice', {
-        body: { practiceId: inserted.id, formSlug: 'taegeuk-1-jang', poses }
-      })
-
+      setStatus('Scoring vs gold...')
+      const { data: scoreData } = await supabase.functions.invoke('score-practice', { body: { practiceId: inserted.id, formSlug: 'taegeuk-1-jang', poses } })
       setScore(scoreData)
       setUploading(false)
       setStatus('')
     } catch (err: any) {
-      console.error(err)
       setStatus(`Error: ${err.message}`)
       setUploading(false)
     }
@@ -184,32 +159,24 @@ export default function RecordPage() {
       <div className="min-h-screen bg-gray-50 p-5 max-w-xl mx-auto">
         <div className="bg-white rounded-3xl p-6 shadow">
           <div className="text-center">
-            <div className="text-xs tracking-widest uppercase text-gray-400">Real AI vs Gold Standard</div>
+            <div className="text-xs tracking-widest uppercase text-gray-400">Full Model vs Gold</div>
             <div className="text-7xl font-black mt-2" style={{ color: dojang?.primary_color }}>{score.total}</div>
-            <div className="text-xs text-gray-500 mt-1">{score.studentFrames} frames vs {score.goldFrames} gold frames</div>
           </div>
-
           {previewUrl && <video src={previewUrl} controls className="w-full rounded-xl mt-6" />}
-
           <div className="mt-6">
-            <div className="font-bold">
-              {score.perMovement && score.perMovement.length? `Faults detected: ${score.perMovement.length}` : 'No major faults detected — great job!'}
-            </div>
+            <div className="font-bold">{score.perMovement && score.perMovement.length? `Faults: ${score.perMovement.length}` : 'No major faults!'}</div>
             <div className="space-y-3 mt-3">
               {score.perMovement && score.perMovement.map((f: any, i: number) => (
                 <div key={i} className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm">
-                  <div className="font-bold">Movement {f.movement}: {f.english}</div>
-                  <div className="mt-1">⚠️ {f.issue}</div>
-                  <div className="text-xs text-gray-500 mt-1">dist: {f.dist}</div>
+                  <div className="font-bold">Move {f.movement}: {f.english}</div>
+                  <div className="mt-1">{f.issue}</div>
                 </div>
               ))}
-              {score.error && <div className="text-xs text-red-500">Error: {score.error}</div>}
             </div>
           </div>
-
           <div className="grid grid-cols-2 gap-3 mt-6">
             <button onClick={goBack} className="w-full bg-black text-white p-4 rounded-xl font-bold">Back to Home</button>
-            <button onClick={() => { window.location.href = '/admin/debug' }} className="w-full bg-white border-2 border-black p-4 rounded-xl font-bold">Open Debugger</button>
+            <button onClick={() => { window.location.href = '/admin/debug' }} className="w-full bg-white border-2 border-black p-4 rounded-xl font-bold">Debugger</button>
           </div>
         </div>
       </div>
@@ -219,33 +186,25 @@ export default function RecordPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <div className="p-4 flex justify-between items-center border-b">
-        <button onClick={goBack} className="font-bold text-gray-600">← Back to Home</button>
+        <button onClick={goBack} className="font-bold text-gray-600">Back</button>
         <button onClick={() => setFacingMode((f) => f === 'environment'? 'user' : 'environment')} className="border px-3 py-2 rounded-full text-sm font-bold">Flip</button>
       </div>
-
       <div className="p-4">
         {!recordedBlob? (
-         !recording && countdown === 0? (
+        !recording && countdown === 0? (
             <button onClick={startCountdown} className="w-full p-5 rounded-xl font-black text-lg text-white" style={{ backgroundColor: dojang?.primary_color || '#0F4C8C' }}>Start Recording</button>
           ) : recording? (
-            <button onClick={stopRecording} className="w-full p-5 rounded-xl font-black bg-red-600 text-white">Stop Recording</button>
+            <button onClick={stopRecording} className="w-full p-5 rounded-xl font-black bg-red-600 text-white">Stop</button>
           ) : null
         ) : (
-          <button onClick={uploadAndScore} disabled={uploading} className="w-full p-5 rounded-xl font-black text-lg text-white disabled:opacity-50" style={{ backgroundColor: dojang?.primary_color || '#0F4C8C' }}>
-            {uploading? status || 'Scoring...' : 'Get My Real Score!'}
-          </button>
+          <button onClick={uploadAndScore} disabled={uploading} className="w-full p-5 rounded-xl font-black text-lg text-white disabled:opacity-50" style={{ backgroundColor: dojang?.primary_color || '#0F4C8C' }}>{uploading? status : 'Get Score'}</button>
         )}
-        {status && <div className="text-center text-xs text-gray-500 mt-2 animate-pulse">{status}</div>}
+        {status && <div className="text-center text-xs text-gray-500 mt-2">{status}</div>}
       </div>
-
       <div className="flex-1 relative bg-gray-900 flex items-center justify-center overflow-hidden">
         <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" style={{ maxHeight: '65vh' }} />
-        {countdown > 0 && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 text-9xl font-black text-white">{countdown}</div>
-        )}
-        {previewUrl &&!recording && countdown === 0 && (
-          <video src={previewUrl} controls className="absolute inset-0 w-full h-full object-cover" />
-        )}
+        {countdown > 0 && <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 text-9xl font-black text-white">{countdown}</div>}
+        {previewUrl &&!recording && countdown === 0 && <video src={previewUrl} controls className="absolute inset-0 w-full h-full object-cover" />}
       </div>
     </div>
   )
