@@ -74,12 +74,9 @@ export default function RecordPage() {
     setRecording(false)
   }
 
-  // THIS IS THE FIX - full model + tracking options + 640x480
   const extractPoses = async (blob: Blob) => {
-    setStatus('Loading MediaPipe full model... (better with dobok pants)')
+    setStatus('Loading MediaPipe FULL model...')
     const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm')
-
-    // HERE IS WHERE THE TRACKING OPTIONS GO
     const landmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task'
@@ -91,12 +88,12 @@ export default function RecordPage() {
       minTrackingConfidence: 0.7
     })
 
-    setStatus('Analyzing movement... 0%')
     const video = document.createElement('video')
     video.src = URL.createObjectURL(blob)
     video.muted = true
-    await new Promise((r) => { video.onloadedmetadata = r as any })
-    await video.play()
+    video.crossOrigin = 'anonymous'
+    await new Promise((resolve: any) => { video.onloadedmetadata = resolve })
+    video.pause()
 
     const poses: any[] = []
     const canvas = document.createElement('canvas')
@@ -104,18 +101,25 @@ export default function RecordPage() {
     canvas.height = 480
     const ctx = canvas.getContext('2d')!
 
-    while (video.currentTime < video.duration) {
+    for (let t = 0; t < video.duration; t += 0.1) {
+      await new Promise<void>((resolve) => {
+        const onSeeked = () => {
+          video.removeEventListener('seeked', onSeeked)
+          resolve()
+        }
+        video.addEventListener('seeked', onSeeked)
+        video.currentTime = t
+      })
       ctx.drawImage(video, 0, 0, 640, 480)
-      const result = landmarker.detectForVideo(canvas, performance.now())
+      const result = landmarker.detectForVideo(canvas, t * 1000)
       if (result.landmarks && result.landmarks[0]) {
         poses.push(result.landmarks[0])
       }
-      video.currentTime += 0.1
-      if (poses.length % 10 === 0) {
-        setStatus(`Analyzing... ${Math.round((video.currentTime / video.duration) * 100)}% - ${poses.length} frames`)
+      if (poses.length % 20 === 0) {
+        setStatus(`Analyzing... ${Math.round((t / video.duration) * 100)}% - ${poses.length} frames`)
       }
-      await new Promise((r) => setTimeout(r, 10))
     }
+
     landmarker.close()
     setStatus('')
     return poses
@@ -191,7 +195,7 @@ export default function RecordPage() {
       </div>
       <div className="p-4">
         {!recordedBlob? (
-        !recording && countdown === 0? (
+       !recording && countdown === 0? (
             <button onClick={startCountdown} className="w-full p-5 rounded-xl font-black text-lg text-white" style={{ backgroundColor: dojang?.primary_color || '#0F4C8C' }}>Start Recording</button>
           ) : recording? (
             <button onClick={stopRecording} className="w-full p-5 rounded-xl font-black bg-red-600 text-white">Stop</button>

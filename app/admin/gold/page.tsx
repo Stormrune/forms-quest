@@ -11,11 +11,9 @@ export default function GoldPage() {
 
   const processFile = async (file: File, name: string) => {
     setDownloadUrl(null)
-    setStatus(`Loading MediaPipe FULL model for ${name}... (better with dobok pants)`)
+    setStatus(`Loading MediaPipe FULL model for ${name}...`)
 
     const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm')
-
-    // FULL MODEL + tracking options - this is the fix for loose pants
     const landmarker = await PoseLandmarker.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task'
@@ -30,8 +28,9 @@ export default function GoldPage() {
     const video = document.createElement('video')
     video.src = URL.createObjectURL(file)
     video.muted = true
-    await new Promise((r) => { video.onloadedmetadata = r as any })
-    await video.play()
+    video.crossOrigin = 'anonymous'
+    await new Promise((resolve: any) => { video.onloadedmetadata = resolve })
+    video.pause()
 
     const poses: any[] = []
     const canvas = document.createElement('canvas')
@@ -41,17 +40,23 @@ export default function GoldPage() {
 
     setStatus(`Extracting ${name}... 0%`)
 
-    while (video.currentTime < video.duration) {
+    for (let t = 0; t < video.duration; t += 0.1) {
+      await new Promise<void>((resolve) => {
+        const onSeeked = () => {
+          video.removeEventListener('seeked', onSeeked)
+          resolve()
+        }
+        video.addEventListener('seeked', onSeeked)
+        video.currentTime = t
+      })
       ctx.drawImage(video, 0, 0, 640, 480)
-      const res = landmarker.detectForVideo(canvas, performance.now())
+      const res = landmarker.detectForVideo(canvas, t * 1000)
       if (res.landmarks && res.landmarks[0]) {
-        poses.push(res.landmarks[0]) // 33 points
+        poses.push(res.landmarks[0])
       }
-      video.currentTime += 0.1
       if (poses.length % 20 === 0) {
-        setStatus(`Extracting ${name}... ${Math.round((video.currentTime / video.duration) * 100)}% - ${poses.length} frames`)
+        setStatus(`Extracting ${name}... ${Math.round((t / video.duration) * 100)}% - ${poses.length} frames`)
       }
-      await new Promise((r) => setTimeout(r, 10))
     }
 
     const jsonObj = { form: 'taegeuk-1-jang', angle: name, frames: poses.length, poses }
@@ -61,12 +66,12 @@ export default function GoldPage() {
     const { error } = await supabase.storage.from('reference-poses').upload(`${name}-poses.json`, blob, { upsert: true })
 
     if (error) {
-      setStatus(`Upload failed: ${error.message} - Downloading file instead. Drag it into bucket UI.`)
+      setStatus(`Upload failed: ${error.message} - Use download button`)
       const url = URL.createObjectURL(blob)
       setDownloadUrl(url)
       setDownloadName(`${name}-poses.json`)
     } else {
-      setStatus(`Done! Uploaded ${name}-poses.json - ${poses.length} frames - check bucket now`)
+      setStatus(`Done! ${name}-poses.json - ${poses.length} frames - check bucket`)
     }
 
     landmarker.close()
@@ -74,31 +79,24 @@ export default function GoldPage() {
 
   return (
     <div className="p-10 max-w-xl mx-auto">
-      <h1 className="text-2xl font-black">Generate Gold Standard Poses - FULL Model</h1>
-      <p className="text-sm text-gray-500 mt-2">Using pose_landmarker_full at 640x480 with 0.7 confidence - much better with loose dobok pants. If upload fails, it gives you download link to drag into Supabase.</p>
-
+      <h1 className="text-2xl font-black">Generate Gold Poses - FULL Model Fixed Seek</h1>
+      <p className="text-sm text-gray-500 mt-2">This version fixes frozen frames 65-80 bug. It waits for video seek.</p>
       <div className="mt-6 space-y-4">
         <div>
-          <div className="font-bold text-sm">Front angle - L4T0ixGVupU</div>
+          <div className="font-bold text-sm">Front angle</div>
           <input type="file" accept="video/*" onChange={(e) => e.target.files && e.target.files[0] && processFile(e.target.files[0], 'taegeuk-1-jang-front')} className="mt-1" />
         </div>
         <div>
-          <div className="font-bold text-sm">Side angle - ac9k87OqD7E</div>
+          <div className="font-bold text-sm">Side angle</div>
           <input type="file" accept="video/*" onChange={(e) => e.target.files && e.target.files[0] && processFile(e.target.files[0], 'taegeuk-1-jang-side')} className="mt-1" />
         </div>
       </div>
-
       <div className="mt-6 p-4 bg-gray-100 rounded-xl text-sm whitespace-pre-wrap">{status || 'Waiting...'}</div>
-
       {downloadUrl && (
         <a href={downloadUrl} download={downloadName} className="mt-4 inline-block bg-black text-white px-6 py-3 rounded-xl font-bold">
-          Download {downloadName} and manually upload to bucket
+          Download {downloadName}
         </a>
       )}
-
-      <div className="mt-8 text-xs text-gray-400">
-        After both files are in reference-poses bucket, you should see 2 files: front-poses.json + side-poses.json. Delete the old combined.json. Then re-record student videos - they will now use same full model.
-      </div>
     </div>
   )
 }
